@@ -19,7 +19,7 @@ function ctools_automodal_menu_alter(&$items) {
   $modal_paths = ctools_automodal_get_modal_paths();
   $modal_regexp_pieces = array();
 
-  $convert_to_regexp = function ($value) { return preg_replace('/%[^\/]*/', '[^/]+', $value); };
+  //$convert_to_regexp = function ($value) { return preg_replace('/%[^\/]*/', '[^/]+', $value); };
   foreach ($modal_paths as $path) {
     if (empty($items[$path])) {
       continue;
@@ -39,14 +39,14 @@ function ctools_automodal_menu_alter(&$items) {
       $items["$path/%ctools_js"]['type'] = MENU_CALLBACK;
     }
 
-    $modal_regexp_pieces[] = $convert_to_regexp($path);
+    $modal_regexp_pieces[] = _ctools_automodal_menu_alter_regex($path);
     $modal_paths[] = $path;
   }
 
   if (!empty($modal_paths)) {
     $all_paths = array_keys($items);
     $modal_regexp = '@^' . implode('|^', $modal_regexp_pieces) . '@';
-    $not_modal_regexp = '@^' . implode('|^', array_map($convert_to_regexp, array_diff(preg_grep($modal_regexp, $all_paths), $modal_paths))) . '@';
+    $not_modal_regexp = '@^' . implode('|^', array_map('_ctools_automodal_menu_alter_regex', array_diff(preg_grep($modal_regexp, $all_paths), $modal_paths))) . '@';
   }
   else {
     $modal_regexp = $not_modal_regexp = '';
@@ -54,6 +54,13 @@ function ctools_automodal_menu_alter(&$items) {
 
   variable_set('ctools_automodal_regexp', $modal_regexp);
   variable_set('ctools_automodal_not_regexp', $not_modal_regexp);
+}
+
+/**
+ * A helper function that matches a path in ctools_automodal_menu_alter().
+ */
+function _ctools_automodal_menu_alter_regex($value) {
+  return preg_replace('/%[^\/]*/', '[^/]+', $value);
 }
 
 /**
