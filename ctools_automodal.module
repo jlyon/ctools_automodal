@@ -25,9 +25,16 @@ function ctools_automodal_menu_alter(&$items) {
       continue;
     }
     $item = $items[$path];
+    
     if ($item['page callback'] == 'drupal_get_form') {
       $items["$path/%ctools_js"] = $item;
       $items["$path/%ctools_js"]['page callback'] = 'ctools_automodal_get_form';
+      $items["$path/%ctools_js"]['page arguments'][] = substr_count($path, '/') + 1;
+      $items["$path/%ctools_js"]['type'] = MENU_CALLBACK;
+    }
+    elseif ($item['page callback'] == 'node_add') {
+      $items["$path/%ctools_js"] = $item;
+      $items["$path/%ctools_js"]['page callback'] = 'ctools_automodal_node_add';
       $items["$path/%ctools_js"]['page arguments'][] = substr_count($path, '/') + 1;
       $items["$path/%ctools_js"]['type'] = MENU_CALLBACK;
     }
@@ -367,6 +374,7 @@ function _ctools_automodal_fix_get_q() {
 function _ctools_automodal_get_form_redirect_path($modal_options, $form_state) {
   $path = NULL;
   $options = array();
+
   if ($modal_options['redirect'] !== FALSE && ($modal_options['redirect'] || $form_state['redirect'] || !empty($_GET['destination']))) {
     if (isset($_GET['destination']) && !url_is_external($_GET['destination'])) {
       $options = drupal_parse_url($_GET['destination']);
@@ -401,6 +409,28 @@ function _ctools_automodal_get_form_confirm_page($modal_options) {
   $rendered_confirmation = theme('ctools_automodal_confirmation', $confirmation);
   return array($modal_options['confirm']['title'], $rendered_confirmation);
 }
+
+/**
+ * A wrapper to make node_add pages work as a form.
+ */
+function ctools_automodal_node_add() {
+  $args = func_get_args();
+  
+  global $user;
+  $type = $args[0];
+
+  $node = (object) array(
+    'uid' => $user->uid,
+    'name' => (isset($user->name) ? $user->name : ''),
+    'type' => $type,
+    'language' => LANGUAGE_NONE,
+  );
+
+  $output = ctools_automodal_get_form($type . '_node_form', $node, $args[1]);
+
+  return $output;
+}
+
 
 /**
  * Display a Drupal form using CTools modal or normal page display.
@@ -450,7 +480,7 @@ function ctools_automodal_get_form() {
         $commands[] = ctools_ajax_command_reload();
       }
     }
-
+ 
     print ajax_render($commands);
     exit();
   }
@@ -513,6 +543,7 @@ function ctools_automodal_page_render($output) {
   $commands = array();
   $title = drupal_get_title();
   $commands[] = ctools_modal_command_display($title, $output);
+  
   return $commands;
 }
 
