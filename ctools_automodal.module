@@ -1,4 +1,4 @@
-<?php
+ <?php
 
 /**
  * Implements hook_module_implements_alter().
@@ -19,13 +19,23 @@ function ctools_automodal_menu_alter(&$items) {
   $modal_paths = ctools_automodal_get_modal_paths();
   $modal_regexp_pieces = array();
 
+  // Create unique node edit links for each content type
+  // @todo: necessary (taken from node_menu()) node_type_cache_reset();
+  foreach (node_type_get_types() as $type) {
+    $type_url_str = str_replace('_', '-', $type->type);
+    if (empty($items['node/%node/edit/' . $type_url_str])) {
+      $items['node/%node/edit/' . $type_url_str] = $items['node/%node/edit'];
+      $items['node/%node/edit/' . $type_url_str]['type'] = MENU_CALLBACK;
+    }
+  }
+
   //$convert_to_regexp = function ($value) { return preg_replace('/%[^\/]*/', '[^/]+', $value); };
   foreach ($modal_paths as $path) {
     if (empty($items[$path])) {
       continue;
     }
     $item = $items[$path];
-    
+
     if ($item['page callback'] == 'drupal_get_form') {
       $items["$path/%ctools_js"] = $item;
       $items["$path/%ctools_js"]['page callback'] = 'ctools_automodal_get_form';
@@ -35,6 +45,12 @@ function ctools_automodal_menu_alter(&$items) {
     elseif ($item['page callback'] == 'node_add') {
       $items["$path/%ctools_js"] = $item;
       $items["$path/%ctools_js"]['page callback'] = 'ctools_automodal_node_add';
+      $items["$path/%ctools_js"]['page arguments'][] = substr_count($path, '/') + 1;
+      $items["$path/%ctools_js"]['type'] = MENU_CALLBACK;
+    }
+    elseif ($item['page callback'] == 'node_page_edit') {
+      $items["$path/%ctools_js"] = $item;
+      $items["$path/%ctools_js"]['page callback'] = 'ctools_automodal_node_edit';
       $items["$path/%ctools_js"]['page arguments'][] = substr_count($path, '/') + 1;
       $items["$path/%ctools_js"]['type'] = MENU_CALLBACK;
     }
@@ -255,26 +271,38 @@ function ctools_automodal_get_modal_options($path) {
   $modal_options = NULL;
   $ctools_modal_paths = ctools_automodal_get_all_modal_options();
 
-  if (isset($ctools_modal_paths[$path])) {
-    $modal_options = $ctools_modal_paths[$path];
-    $modal_options += array(
-      'style' => '',
-      'confirm' => FALSE,
-      'close' => FALSE,
-      'confirm' => FALSE,
-      'reload' => FALSE,
-      'redirect' => '',
-    );
-    if ($modal_options['confirm']) {
-      $modal_options['confirm'] += array(
-        'title' => t('Confirmation'),
-        'text' => t('The form was submitted.'),
-        'callback' => 'ctools_automodal_confirmation_callback',
-      );
-    }
-  };
+  // @todo: Do this with a regex?
+  //$router_item = menu_get_item($path);
+  //$path = $router_item['path'];
 
-  return $modal_options;
+
+
+
+  foreach ($ctools_modal_paths as $key => $modal_options) {
+    $pattern = _ctools_automodal_menu_alter_regex($key);
+    $pattern = str_replace(array('/'), array('\/'), $pattern);
+    $pattern = '/^' . $pattern . '$/';
+    if (preg_match($pattern, $path)) {
+      $modal_options += array(
+        'style' => '',
+        'confirm' => FALSE,
+        'close' => FALSE,
+        'confirm' => FALSE,
+        'reload' => FALSE,
+        'redirect' => '',
+      );
+      if ($modal_options['confirm']) {
+        $modal_options['confirm'] += array(
+          'title' => t('Confirmation'),
+          'text' => t('The form was submitted.'),
+          'callback' => 'ctools_automodal_confirmation_callback',
+        );
+      }
+
+      return $modal_options;
+    }
+  }
+
 }
 
 /**
@@ -415,7 +443,7 @@ function _ctools_automodal_get_form_confirm_page($modal_options) {
  */
 function ctools_automodal_node_add() {
   $args = func_get_args();
-  
+
   global $user;
   $type = $args[0];
 
@@ -430,6 +458,19 @@ function ctools_automodal_node_add() {
 
   return $output;
 }
+
+/**
+ * A wrapper to make node_edit pages work as a form.
+ */
+function ctools_automodal_node_edit() {
+  $args = func_get_args();
+
+  $node = $args[0];
+  $output = ctools_automodal_get_form($node->type . '_node_form', $node, $args[1]);
+
+  return $output;
+}
+
 
 
 /**
@@ -460,6 +501,14 @@ function ctools_automodal_get_form() {
     if (!empty($form_state['executed']) && empty($form_state['rebuild'])) {
       // Overwrite the form wrapper output.
       $commands = array();
+
+      // Add custom commands
+      if ($modal_options['commands_callback']) {
+        $commands = call_user_func_array($modal_options['commands_callback'], array($form_state));
+        print ajax_render($commands);
+        exit();
+      }
+
       $commands[] = ctools_modal_command_loading();
 
       // Close the form or display the confirmation page.
@@ -473,14 +522,21 @@ function ctools_automodal_get_form() {
 
       // Redirect or reload current page.
       list($path, $options) = _ctools_automodal_get_form_redirect_path($modal_options, $form_state);
-      if (!empty($path)) {
-        $commands[] = ctools_ajax_command_redirect($path, 0, $options);
+      if (!empty($path) && $modal_options['redirect'] !== FALSE) {
+        if ($modal_options['redirect'] === 'modal') {
+          // Open the redirect path in a modal
+          $commands = _ctools_automodal_redirect($path, $options);
+        }
+        else {
+          // Issue a generic page redirect
+          $commands[] = ctools_ajax_command_redirect($path, 0, $options);
+        }
       }
       elseif ($modal_options['reload']) {
         $commands[] = ctools_ajax_command_reload();
       }
     }
- 
+
     print ajax_render($commands);
     exit();
   }
@@ -489,6 +545,66 @@ function ctools_automodal_get_form() {
     return call_user_func_array('drupal_get_form', $args);
   }
 }
+
+/**
+ * Hijack a redirect so it stays in the modal.
+ * A lot of code copied from menu_execute_active_handler().
+ * @param  [type] $path    [description]
+ * @param  [type] $options [description]
+ * @return [type]          [description]
+ */
+function _ctools_automodal_redirect($path, $options) {
+  if ($router_item = menu_get_item($path)) {
+    if ($router_item['access']) {
+
+      if ($router_item['include_file']) {
+        require_once DRUPAL_ROOT . '/' . $router_item['include_file'];
+      }
+
+      // Alter response ala the hook_menu_item call above.
+      if ($router_item['page_callback'] == 'node_page_edit') {
+        $args = $router_item['page_arguments'];
+        $router_item['page_callback'] = 'drupal_get_form';
+        $router_item['page_arguments'] = array($args[0]->type . '_node_form', $args[0], $args[1]);
+      }
+      if ($router_item['page_callback'] == 'drupal_get_form') {
+
+        // @todo
+        // Some modules (like multistep) depend on vars passed via the querystring
+
+        // This logic taken from ctools_automodal_get_form() above
+        $args = $router_item['page_arguments'];
+        $form_id = array_shift($args);
+        $form_state = array(
+          'ajax' => TRUE,
+          'build_info' => array('args' => $args),
+        );
+        // @todo? $form = drupal_rebuild_form($form_id, $form_state);
+
+        $commands = ctools_modal_form_wrapper($form_id, $form_state);
+      }
+      // TODO:
+      //elseif ($item['page callback'] == 'node_add') {
+      //  $router_item['page callback'] = 'ctools_automodal_node_add';
+      //}
+      else {
+        $output = call_user_func_array($router_item['page_callback'], $router_item['page_arguments']);
+        $commands = ctools_automodal_page_render($output);
+      }
+    }
+    else {
+      // TODO:
+      $page_callback_result = MENU_ACCESS_DENIED;
+    }
+  }
+  else {
+    // TODO:
+    $page_callback_result = MENU_NOT_FOUND;
+  }
+
+  return $commands;
+}
+
 
 /**
  * Display a normal Drupal page using CTools modal.
@@ -543,7 +659,7 @@ function ctools_automodal_page_render($output) {
   $commands = array();
   $title = drupal_get_title();
   $commands[] = ctools_modal_command_display($title, $output);
-  
+
   return $commands;
 }
 
