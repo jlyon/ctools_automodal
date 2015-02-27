@@ -504,7 +504,12 @@ function ctools_automodal_get_form() {
 
       // Add custom commands
       if ($modal_options['commands_callback']) {
-        $commands = call_user_func_array($modal_options['commands_callback'], array($form_state));
+        $context = array(
+          'args' => $args,
+          'form_id' => $form_id,
+          'ajax' => $ajax,
+        );
+        $commands = call_user_func_array($modal_options['commands_callback'], array($form_state, $context));
         print ajax_render($commands);
         exit();
       }
